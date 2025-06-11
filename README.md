@@ -28,6 +28,22 @@ This implementation includes:
 
 ---
 
-# Training Loss for 2000 iterations
+## Training Loss
+![Image](https://github.com/user-attachments/assets/c9263405-5718-4fa3-b60f-679260110007)
+
+## Inference Sample
+
+```python
+input = "Whell's the couse,"
+output = """Whell's the couse, hear me speak.
+All:
+Speak, speak.
+First Citizen:
+You are all resolved rather to die than to famish?
+All:
+Resolved. resolved.
+First Citizen:"""
+```
+
 
 
