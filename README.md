@@ -44,10 +44,13 @@ All:
 Resolved. resolved.
 First Citizen:"""
 ```
+### Attention Weights plot
+![Image](https://github.com/user-attachments/assets/0c0f229d-fe90-484f-b500-0b0f8674bb61)
 
 ### Inspiration
 
 This project is inspired by [Andrej Karpathy's](https://github.com/karpathy) excellent work on [nanoGPT](https://github.com/karpathy/nanoGPT), a minimal, educational implementation of a GPT-like language model.
+
 
 
 
