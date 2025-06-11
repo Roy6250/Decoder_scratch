@@ -45,5 +45,9 @@ Resolved. resolved.
 First Citizen:"""
 ```
 
+### Inspiration
+
+This project is inspired by [Andrej Karpathy's](https://github.com/karpathy) excellent work on [nanoGPT](https://github.com/karpathy/nanoGPT), a minimal, educational implementation of a GPT-like language model.
+
 
 
