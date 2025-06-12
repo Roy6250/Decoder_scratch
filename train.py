@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 from main import GPT, GPTConfig # Assuming these are in your local 'main.py'
 import inspect
 import matplotlib.pyplot as plt
-
+import time
 # Hyperparameters
 gradient_accumulation_steps = 1
 batch_size = 64
@@ -25,89 +25,46 @@ min_lr = 1e-4
 beta2 = 0.99
 warmup_iters = 100
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_interval=100
+eval_iters=20
 
-# Load dataset
-dataset = load_dataset('tiny_shakespeare', split='train')
+with open('input.txt', 'r', encoding='utf-8') as f:
+    text = f.read()
 
-dataset = load_dataset('tiny_shakespeare')
-train_dataset = dataset['train']
-val_dataset= dataset['validation']
-# print(val_dataset[0])
+chars = sorted(list(set(text)))
+v = len(chars)
+print(chars, v)
 
-# Tokenizer
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
-tokenizer.pad_token = tokenizer.eos_token  # Ensure padding token is set
+# create a mapping from characters to integers & vice versa
+stoi = { ch:i for i,ch in enumerate(chars) }
+itos = { i:ch for i,ch in enumerate(chars) }
+encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
+decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
 
-# Tokenize dataset
-def tokenize_function(examples):
-    return tokenizer(examples['text'], truncation=True, max_length=block_size, padding="max_length")
-
-train_tokenized = train_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
-val_tokenized = val_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
-# This function now correctly creates the input and target pairs for next-token prediction.
-def collate_fn(batch):
-    # Stack the tokenized inputs into a single tensor
-    inputs_tensor = torch.tensor([item['input_ids'] for item in batch], dtype=torch.long)
-    # The 'inputs' for the model will be all tokens except the last one
-    inputs = inputs_tensor[:, :-1].contiguous()
-    
-    # The 'targets' for the model will be all tokens except the first one (shifted by one)
-    targets = inputs_tensor[:, 1:].contiguous()
-    
-    return inputs, targets
-
-# # # Prepare DataLoader with the corrected collate function
-train_dataloader = DataLoader(train_tokenized, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-val_dataloader = DataLoader(val_tokenized, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-
-# # --- Verification Step ---
-# # Let's check the output of the dataloader
-# data_iterator = iter(dataloader)
-# first_batch = next(data_iterator)
-
-# # Unpack and print the data to verify the shapes
-# features_batch, labels_batch = first_batch
-
-# # print("--- First Batch Fetched from DataLoader ---")
-
-# # # Check if the first token of the target is the second token of the input
-# # print(f"\nFirst input token for sample 0: {features_batch[0, 0]}")
-# # print(f"Second input token for sample 0: {features_batch[0, 1]}")
-# # print(f"First target token for sample 0: {labels_batch[0, 0]}")
-# # print("Note: The first target token should be the same as the second input token.")
-
-# # print("\nFeatures in the batch (Inputs to the model):")
-# # print(features_batch)
-# # print("\nShape of the features tensor:", features_batch.shape) # Should be [batch_size, block_size - 1]
-
-# # print("\nLabels in the batch (Targets for the model):")
-# # print(labels_batch)
-# # print("\nShape of the labels tensor:", labels_batch.shape) # Should be [batch_size, block_size - 1]
+data = torch.tensor(encode(text), dtype=torch.long)
+n = int(0.9*len(data)) # first 90% will be train, rest val
+train_data = data[:n]
+val_data = data[n:]
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-# train_data = np.fromfile(os.path.join(os.path.dirname(__file__), 'train.bin'), dtype=np.uint16)
-# val_data = np.fromfile(os.path.join(os.path.dirname(__file__), 'val.bin'), dtype=np.uint16)
+# data loading
+def get_batch(split):
+    # generate a small batch of data of inputs x and targets y
+    data = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - block_size , (batch_size,))
+    x = torch.stack([data[i:i+block_size] for i in ix])
 
-# # Dataset class
-# class ShakespeareDataset(Dataset):
-#     def __init__(self, data, block_size):
-#         self.data = data
-#         self.block_size = block_size
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    return x.to(device), y.to(device)
 
-#     def __len__(self):
-#         return len(self.data) - self.block_size
 
-#     def __getitem__(self, idx):
-#         x = torch.tensor(self.data[idx:idx + self.block_size], dtype=torch.long)
-#         y = torch.tensor(self.data[idx + 1:idx + 1 + self.block_size], dtype=torch.long)
-#         return x, y
+# x,y = get_batch('train')
+# print("x[0] ", x[0].shape, "\n", x[0])
+# # print("y[:,0,...] ", y[:,0,...].shape, "\n", y[:,0,...])
+# # print(y[0].shape, "\n", y[0])
 
-# # Create datasets and dataloaders
-# train_dataset = ShakespeareDataset(train_data, block_size)
-# val_dataset = ShakespeareDataset(val_data, block_size)
-# train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-# val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
+# print(x.shape)
 
 
 config = GPTConfig(
@@ -139,69 +96,47 @@ iter_num = 0  # Initialize iteration counter
 train_losses=[]
 val_losses=[]
 
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    model.eval() # sets model to eval mode
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train() # just resets to training mode
+    return out
 
+start_time = time.time()
 
-while iter_num < max_iters:
-    train_loss=0
-    for inputs, targets in train_dataloader:
-        if iter_num >= max_iters:
-            break
-        
-        inputs, targets = inputs.to(device), targets.to(device)
-        if iter_num % 100 == 0:
-            pass
+for iter in range(max_iters):
 
-        # Forward pass
-        with torch.amp.autocast(device_type=device, enabled=(device == 'cuda')):  # Updated autocast
-            logits, loss = model(inputs, targets=targets)
+    xb,yb= get_batch('train')
+    xb, yb = xb.to(device), yb.to(device)
+    # Forward pass
+    with torch.amp.autocast(device_type=device, enabled=(device == 'cuda')):  # Updated autocast
+        logits, loss = model(xb, targets=yb)
+    optimizer.zero_grad()
 
-            if iter_num%100 ==0:
-                # print(f"Logits shape: {logits.shape}, Loss: {loss.item()}")
-                # print(logits)
-                pass
+     # Backward pass
+    if scaler:
+        scaler.scale(loss).backward()
+    else:
+        loss.backward()
+    optimizer.step()
 
-        # Backward pass
-        if scaler:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
+    # Gradient accumulation
+    if iter % eval_interval == 0 or iter == max_iters - 1:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        losses = estimate_loss()
+        train_losses.append(losses['train'])
+        val_losses.append(losses['val'])
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, time elapsed: {elapsed_time:.2f} seconds")
 
-        # Gradient accumulation
-        if (iter_num + 1) % gradient_accumulation_steps == 0:
-            if scaler:
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
-            optimizer.zero_grad()
-        train_loss+=loss.item()
-
-    # Adjust learning rate
-    lr = get_lr(iter_num)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-    # Logging
-    if iter_num % 100 == 0:
-        print(f"Iteration {iter_num}, Loss: {loss.item():.6f}, LR: {lr:.6f}")
-
-    iter_num += 1  # Increment iteration counter
-    train_losses.append(train_loss / len(train_dataloader))  # Average loss for the epoch
-
-    # Validation step
-    model.eval()
-    val_loss = 0
-    with torch.no_grad():
-        for inputs,targets in val_dataloader:
-            inputs,targets = inputs.to(device), targets.to(device)
-
-            with torch.amp.autocast(device_type=device, enabled=(device == 'cuda')):
-                logits,loss = model(inputs, targets=targets)
-            val_loss += loss.item()
-
-    val_losses.append(val_loss / len(val_dataloader))  # Average validation loss
-    model.train()  # Switch back to training mode
-    print(f"Iteration {iter_num}, Train Loss: {train_losses[-1]:.6f}, Val Loss: {val_losses[-1]:.6f}, LR: {lr:.6f}")
 
 
 model_save_path = "gpt_model.pth"
@@ -211,7 +146,7 @@ print(f"Model saved to {model_save_path}")
 # Plot training and validation loss
 plt.figure(figsize=(10, 6))
 plt.plot(train_losses, label="Training Loss")
-# plt.plot(val_losses, label="Validation Loss")
+plt.plot(val_losses, label="Validation Loss")
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
 plt.title("Training  Loss")
