@@ -35,14 +35,14 @@ This implementation includes:
 
 ```python
 input = "Whell's the couse,"
-output = """Whell's the couse, hear me speak.
-All:
-Speak, speak.
-First Citizen:
-You are all resolved rather to die than to famish?
-All:
-Resolved. resolved.
-First Citizen:"""
+output = """Whell's the couse, wretch. Thou beat'st our walk:
+For this view she should smeubt. We sh, lreft
+down, go fight, alike your servants; when you
+knep not up.
+
+AUTOLYCUS:
+I cannot, it must beelieve milking, I do not
+wrinklehold, as you are."""
 ```
 ### Attention Weights plot
 ![Image](https://github.com/user-attachments/assets/0c0f229d-fe90-484f-b500-0b0f8674bb61)
